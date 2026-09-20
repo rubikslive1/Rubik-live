@@ -14,29 +14,32 @@
             -webkit-tap-highlight-color: transparent;
         }
 
-        html, body {
+        html {
             width: 100%;
             height: 100%;
-            min-height: 100vh;
-            min-height: 100dvh;
+            background: #0d0e15;
         }
 
         body {
+            width: 100%;
+            height: 100vh;
+            height: 100dvh;
             background: #0d0e15;
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            padding-top: env(safe-area-inset-top, 0px);
             -webkit-user-select: none;
             user-select: none;
         }
 
         #canvas-container {
-            width: 100vw;
-            height: 72%;
             position: relative;
+            width: 100%;
             flex: 0 0 72%;
+            min-height: 0;
             overflow: hidden;
             background: #0d0e15;
         }
@@ -65,7 +68,7 @@
             border: 1px solid rgba(255, 255, 255, 0.18);
             padding: 6px 14px;
             border-radius: 18px;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
             backdrop-filter: blur(8px);
             -webkit-backdrop-filter: blur(8px);
@@ -79,6 +82,8 @@
         #queue-info { color: #00f2fe; }
         #last-action { color: #ff007f; }
 
+        /* Mini 3D görünüş çərçivəsi.
+           border-radius yoxdur: WebGL viewport düzbucaqlıdır, künclər çərçivədən çıxmasın. */
         #pip-frame {
             position: absolute;
             right: 12px;
@@ -86,7 +91,7 @@
             width: 32%;
             aspect-ratio: 1 / 1;
             border: 2px solid rgba(0, 242, 254, 0.9);
-            border-radius: 10px;
+            border-radius: 0;
             box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 242, 254, 0.12);
             pointer-events: none;
             z-index: 9;
@@ -94,33 +99,40 @@
 
         #pip-label {
             position: absolute;
-            right: 18px;
-            bottom: 18px;
-            background: rgba(0, 0, 0, 0.65);
-            border: 1px solid rgba(0, 242, 254, 0.5);
+            top: 6px;
+            left: 6px;
+            background: rgba(13, 14, 21, 0.82);
+            border: 1px solid rgba(0, 242, 254, 0.6);
             color: #00f2fe;
-            padding: 3px 7px;
+            padding: 3px 6px;
             border-radius: 6px;
             font-size: 9px;
             font-weight: 800;
             letter-spacing: 0.3px;
             pointer-events: none;
             z-index: 10;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
         }
 
         #controls-panel {
-            width: 100vw;
-            height: 28%;
-            flex: 0 0 28%;
+            width: 100%;
+            flex: 1 1 0;
+            min-height: 0;
+            overflow-y: auto;
             background: rgba(15, 17, 23, 0.98);
             border-top: 1px solid rgba(255, 255, 255, 0.12);
             padding: 10px;
+            padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
             display: flex;
             flex-direction: column;
             gap: 8px;
-            justify-content: center;
             z-index: 10;
         }
+
+        /* margin:auto — yer çox olanda ortalayır, az olanda yuxarıdan kəsmir */
+        #controls-panel > .btn-group:first-child { margin-top: auto; }
+        #controls-panel > .btn-group:last-child { margin-bottom: auto; }
 
         .btn-group {
             display: flex;
@@ -169,8 +181,8 @@
             #ui-overlay { top: 8px; left: 8px; right: 8px; }
             .status-badge { padding: 5px 9px; font-size: 11px; }
             #pip-frame { right: 8px; bottom: 8px; width: 34%; }
-            #pip-label { right: 12px; bottom: 12px; font-size: 8px; padding: 2px 5px; }
-            #controls-panel { padding: 8px; gap: 6px; }
+            #pip-label { top: 4px; left: 4px; font-size: 8px; padding: 2px 5px; }
+            #controls-panel { padding: 8px; padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); gap: 6px; }
             .btn-group { gap: 4px; }
             button { min-width: 38px; padding: 7px 8px; font-size: 11px; }
         }
@@ -183,8 +195,9 @@
             <div class="status-badge" id="queue-info">Sıra: 0 hərəkət</div>
             <div class="status-badge" id="last-action">Son Hərəkət: -</div>
         </div>
-        <div id="pip-frame" aria-hidden="true"></div>
-        <div id="pip-label" aria-hidden="true">ALT / ARXA GÖRÜNÜŞ</div>
+        <div id="pip-frame" aria-hidden="true">
+            <div id="pip-label" aria-hidden="true">ALT / ARXA GÖRÜNÜŞ</div>
+        </div>
     </div>
 
     <div id="controls-panel">
@@ -212,45 +225,75 @@
         'use strict';
 
         // ============================================================
-        // 1) THREE.JS SƏHNƏSİ VƏ DUAL KAMERA
+        // 0) SABİTLƏR, ELEMENTLƏR VƏ ÖMÜR DÖVRÜ (LIFECYCLE)
         // ============================================================
         const container = document.getElementById('canvas-container');
+        const pipFrame = document.getElementById('pip-frame');
+        const controlsPanel = document.getElementById('controls-panel');
         const queueInfoEl = document.getElementById('queue-info');
         const lastActionEl = document.getElementById('last-action');
-        const buttons = document.querySelectorAll('button[data-move], button[data-action]');
 
+        if (typeof THREE === 'undefined') {
+            queueInfoEl.textContent = 'Three.js yüklənmədi';
+            throw new Error('Three.js CDN-dən yüklənmədi.');
+        }
+
+        const MAX_PIXEL_RATIO = 1.5;          // GPU yükünü məhdudlaşdırır
+        const ANIMATION_DURATION_MAX = 220;   // ms (adi sürət)
+        const ANIMATION_DURATION_MIN = 45;    // ms (böyük növbədə sürətlənmiş rejim)
+        const AUTO_SPIN_SPEED = 0.15;
+        const WS_RECONNECT_DELAY = 2000;
+        const WS_RECONNECT_DELAY_MAX = 10000;
+        const MAX_REPEAT = 200;               // tək siqnalda maksimum təkrar (U10, count:10 ...)
+        const MAX_QUEUE = 2000;               // növbədə maksimum tapşırıq (brauzeri dondurmasın)
+        const MAX_SIGNAL_LENGTH = 20000;      // tək siqnalın maksimum simvol sayı
+        const HISTORY_COMPACT_LIMIT = 400;    // tarixçə bu həddi aşanda sadələşdirilir
+        const TWO_PI = Math.PI * 2;
+
+        // Bütün listener-lər bir AbortController-ə bağlanır — təmizləmə tək abort() ilə olur.
+        const lifecycle = new AbortController();
+        function on(target, type, handler, options) {
+            target.addEventListener(type, handler, Object.assign({ signal: lifecycle.signal }, options));
+        }
+
+        // ============================================================
+        // 1) THREE.JS SƏHNƏSİ VƏ DUAL KAMERA
+        // ============================================================
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x0d0e15);
 
-        const initialAspect = Math.max(container.clientWidth, 1) / Math.max(container.clientHeight, 1);
+        const mainCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+        const secondaryCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
 
-        const mainCamera = new THREE.PerspectiveCamera(45, initialAspect, 0.1, 1000);
-        mainCamera.position.set(5.5, 5.5, 7.5);
-        mainCamera.lookAt(0, 0, 0);
+        // Kameraların baxış istiqaməti (ikinci kamera əks tərəfdən baxır)
+        const VIEW_DIR = new THREE.Vector3(5.5, 5.5, 7.5);
+        const BASE_DISTANCE = VIEW_DIR.length();
+        VIEW_DIR.normalize();
+        const BOUNDING_RADIUS = 2.65;         // kubun (fırlananda) əhatə sferası
 
-        const secondaryCamera = new THREE.PerspectiveCamera(45, initialAspect, 0.1, 1000);
-        secondaryCamera.position.set(-5.5, -5.5, -7.5);
-        secondaryCamera.lookAt(0, 0, 0);
-
-        const renderer = new THREE.WebGLRenderer({
-            antialias: true,
-            alpha: false,
-            powerPreference: 'high-performance'
-        });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
-        renderer.setSize(container.clientWidth, container.clientHeight, false);
-        renderer.setScissorTest(true);
+        let renderer;
+        try {
+            renderer = new THREE.WebGLRenderer({
+                antialias: true,
+                alpha: false,
+                powerPreference: 'high-performance'
+            });
+        } catch (err) {
+            queueInfoEl.textContent = 'WebGL dəstəklənmir';
+            throw err;
+        }
         renderer.setClearColor(0x0d0e15, 1);
+        renderer.setScissorTest(true);
         container.insertBefore(renderer.domElement, container.firstChild);
 
         // İşıqlandırma
         scene.add(new THREE.AmbientLight(0xffffff, 0.85));
 
-        const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.6);
+        const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.65);
         dirLight1.position.set(10, 20, 15);
         scene.add(dirLight1);
 
-        const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.6);
+        const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.65);
         dirLight2.position.set(-10, -20, -15);
         scene.add(dirLight2);
 
@@ -270,13 +313,20 @@
         const cubeGroup = new THREE.Group();
         scene.add(cubeGroup);
 
+        // movePivot həmişə cubeGroup-un mərkəzində, identik transformla dayanır.
         const movePivot = new THREE.Group();
         cubeGroup.add(movePivot);
 
         const baseBoxGeometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
         const sharedEdgeGeometry = new THREE.EdgesGeometry(baseBoxGeometry);
         const sharedEdgeMaterial = new THREE.LineBasicMaterial({ color: 0x000000 });
-        const sharedCubieMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+        // polygonOffset: qara kənar xətləri ilə üzlərin z-fighting (titrəmə) etməsinin qarşısını alır
+        const sharedCubieMaterial = new THREE.MeshLambertMaterial({
+            vertexColors: true,
+            polygonOffset: true,
+            polygonOffsetFactor: 1,
+            polygonOffsetUnits: 1
+        });
 
         function hexToRgb01(hex) {
             const color = new THREE.Color(hex);
@@ -384,27 +434,32 @@
                 if (q === -1) return [0, 0, -1, 0, 1, 0, 1, 0, 0];
                 return [-1, 0, 0, 0, 1, 0, 0, 0, -1];
             }
-            if (axis === 'z') {
-                if (q === 1) return [0, -1, 0, 1, 0, 0, 0, 0, 1];
-                if (q === -1) return [0, 1, 0, -1, 0, 0, 0, 0, 1];
-                return [-1, 0, 0, 0, -1, 0, 0, 0, 1];
-            }
+            if (q === 1) return [0, -1, 0, 1, 0, 0, 0, 0, 1];
+            if (q === -1) return [0, 1, 0, -1, 0, 0, 0, 0, 1];
+            return [-1, 0, 0, 0, -1, 0, 0, 0, 1];
         }
 
+        const tmpMatrix4 = new THREE.Matrix4();
         function matrix3ToQuaternion(m, targetQuaternion) {
-            const matrix = new THREE.Matrix4().set(
+            tmpMatrix4.set(
                 m[0], m[1], m[2], 0,
                 m[3], m[4], m[5], 0,
                 m[6], m[7], m[8], 0,
                 0,    0,    0,    1
             );
-            targetQuaternion.setFromRotationMatrix(matrix).normalize();
+            targetQuaternion.setFromRotationMatrix(tmpMatrix4).normalize();
         }
 
         // ============================================================
-        // 4) FIFO NÖVBƏSİ VƏ HƏRƏKƏT İCRA SİSTEMİ
+        // 4) HƏRƏKƏT PARSERİ, FIFO NÖVBƏSİ VƏ İCRA SİSTEMİ
         // ============================================================
         const VALID_MOVE_RE = /^[URFDLB](?:2|')?$/;
+        // Açıq təkrar:   U*5, UX5, U'*3, R2*4  (əsas hərəkət 2 və ya ' ala bilər)
+        const REPEAT_EXPLICIT_RE = /^([URFDLB](?:2'|'2|2|')?)[*X](\d+)$/;
+        // Gizli təkrar:  U5, U10, U20, U'10     (rəqəm = təkrar sayı; "U2" istisnadır, standart yarım dönüşdür)
+        const REPEAT_IMPLICIT_RE = /^([URFDLB]'?)(\d+)$/;
+
+        const FACE_AXIS = Object.freeze({ U: 'y', D: 'y', R: 'x', L: 'x', F: 'z', B: 'z' });
         const MOVE_BASE = Object.freeze({
             R: Object.freeze({ axis: 'x', layerValue:  1, quarterTurns: -1 }),
             L: Object.freeze({ axis: 'x', layerValue: -1, quarterTurns:  1 }),
@@ -418,7 +473,6 @@
             return typeof move === 'string' && VALID_MOVE_RE.test(move);
         }
 
-        // Mobil klaviatura əyri dırnaqlarını (smart-quotes) düzgün ' simvoluna çevirir
         function sanitizeToken(raw) {
             return String(raw)
                 .replace(/[\u2018\u2019\u201B\u2032\u02BC\u00B4`]/g, "'")
@@ -440,13 +494,13 @@
             const face = move[0];
             const prime = move.includes("'");
             const doubleTurn = move.includes('2');
-            let quarterTurns = MOVE_BASE[face].quarterTurns;
+            const base = MOVE_BASE[face];
+            let quarterTurns = base.quarterTurns;
 
             if (prime) quarterTurns *= -1;
             if (doubleTurn) quarterTurns *= 2;
             quarterTurns = normalizeQuarterTurns(quarterTurns);
 
-            const base = MOVE_BASE[face];
             return {
                 face,
                 axis: base.axis,
@@ -454,139 +508,6 @@
                 quarterTurns,
                 angle: quarterTurns * Math.PI / 2
             };
-        }
-
-        const moveQueue = [];
-        let moveHistory = [];
-        let isAnimating = false;
-        const ANIMATION_DURATION = 150;
-        const AUTO_SPIN_SPEED = 0.15;
-        const WS_RECONNECT_DELAY = 2000;
-
-        function updateUI(lastMove = null) {
-            const totalPending = moveQueue.length + (isAnimating ? 1 : 0);
-            queueInfoEl.textContent = `Sıra: ${totalPending} hərəkət`;
-            if (lastMove !== null) lastActionEl.textContent = `Son Hərəkət: ${lastMove}`;
-        }
-
-        function enqueueMove(move, recordHistory = true) {
-            const normalized = normalizeMove(move);
-            if (!normalized) return false;
-            moveQueue.push({ type: 'move', move: normalized, recordHistory });
-            updateUI();
-            processQueue();
-            return true;
-        }
-
-        function handleIncomingSignal(actionStr) {
-            if (typeof actionStr !== 'string') return false;
-            const clean = sanitizeToken(actionStr);
-            if (!clean) return false;
-
-            if (clean === 'SOLVE') {
-                moveQueue.push({ type: 'solve' });
-                updateUI();
-                processQueue();
-                return true;
-            }
-
-            if (clean === 'SCRAMBLE') {
-                triggerRandomScramble();
-                return true;
-            }
-
-            return enqueueMove(clean, true);
-        }
-
-        function processQueue() {
-            if (isAnimating || moveQueue.length === 0) {
-                updateUI();
-                return;
-            }
-
-            const task = moveQueue.shift();
-
-            if (task.type === 'solve') {
-                const rawInverse = moveHistory.slice().reverse().map(invertMove).filter(Boolean);
-                const solution = simplifyMoveArray(rawInverse);
-                moveHistory = [];
-
-                for (let i = solution.length - 1; i >= 0; i--) {
-                    moveQueue.unshift({ type: 'move', move: solution[i], recordHistory: false });
-                }
-
-                updateUI();
-                processQueue();
-                return;
-            }
-
-            if (task.type !== 'move') {
-                processQueue();
-                return;
-            }
-
-            isAnimating = true;
-            updateUI(task.move);
-
-            executeMove(task.move, () => {
-                if (task.recordHistory) moveHistory.push(task.move);
-                isAnimating = false;
-                updateUI();
-                processQueue();
-            });
-        }
-
-        function executeMove(moveStr, callback) {
-            const config = getMoveConfig(moveStr);
-            if (!config) {
-                if (typeof callback === 'function') callback();
-                return;
-            }
-
-            const { axis, layerValue, angle, quarterTurns } = config;
-            const axisIndex = axis === 'x' ? 0 : axis === 'y' ? 1 : 2;
-
-            const activeCubies = cubies.filter(c => c.userData.cubeState.grid[axisIndex] === layerValue);
-            const rotationMatrix = rotationMatrix3(axis, quarterTurns);
-
-            movePivot.rotation.set(0, 0, 0);
-            for (const cubie of activeCubies) movePivot.attach(cubie);
-
-            const startTime = performance.now();
-
-            function animateRotation(now) {
-                const elapsed = now - startTime;
-                const progress = Math.min(Math.max(elapsed / ANIMATION_DURATION, 0), 1);
-                const easeProgress = 1 - Math.pow(1 - progress, 2);
-                const currentAngle = angle * easeProgress;
-
-                if (axis === 'x') movePivot.rotation.x = currentAngle;
-                else if (axis === 'y') movePivot.rotation.y = currentAngle;
-                else movePivot.rotation.z = currentAngle;
-
-                if (progress < 1) {
-                    requestAnimationFrame(animateRotation);
-                    return;
-                }
-
-                movePivot.rotation.set(0, 0, 0);
-
-                for (const cubie of activeCubies) {
-                    cubeGroup.attach(cubie);
-                    const state = cubie.userData.cubeState;
-
-                    state.grid = matVec3(rotationMatrix, state.grid);
-                    state.orientation = matMul3(rotationMatrix, state.orientation);
-
-                    cubie.position.set(state.grid[0] * STEP, state.grid[1] * STEP, state.grid[2] * STEP);
-                    matrix3ToQuaternion(state.orientation, cubie.quaternion);
-                    cubie.updateMatrix();
-                }
-
-                if (typeof callback === 'function') callback();
-            }
-
-            requestAnimationFrame(animateRotation);
         }
 
         function invertMove(move) {
@@ -597,48 +518,258 @@
             return normalized + "'";
         }
 
+        // Eyni oxdakı (məs. U və D) hərəkətlər kommutativdir; bu səbəbdən onların arasından da birləşdirmək olar.
         function simplifyMoveArray(moves) {
             const result = [];
-            const getVal = m => m.endsWith('2') ? 2 : m.endsWith("'") ? 3 : 1;
-            const valToM = (f, v) => v === 0 ? null : v === 1 ? f : v === 2 ? f + '2' : f + "'";
+            const turnsOf = m => (m.endsWith('2') ? 2 : m.endsWith("'") ? 3 : 1);
+            const toMove = (face, t) => (t === 1 ? face : t === 2 ? face + '2' : face + "'");
 
-            for (const move of moves) {
-                const normalized = normalizeMove(move);
-                if (!normalized) continue;
+            for (const raw of moves) {
+                const move = normalizeMove(raw);
+                if (!move) continue;
 
-                if (result.length === 0) {
-                    result.push(normalized);
-                    continue;
+                const face = move.charAt(0);
+                const axis = FACE_AXIS[face];
+                let merged = false;
+
+                for (let i = result.length - 1; i >= 0; i--) {
+                    const other = result[i];
+                    const otherFace = other.charAt(0);
+                    if (FACE_AXIS[otherFace] !== axis) break;
+                    if (otherFace === face) {
+                        const total = (turnsOf(other) + turnsOf(move)) % 4;
+                        if (total === 0) result.splice(i, 1);
+                        else result[i] = toMove(face, total);
+                        merged = true;
+                        break;
+                    }
                 }
 
-                const last = result[result.length - 1];
-                if (last.charAt(0) !== normalized.charAt(0)) {
-                    result.push(normalized);
-                    continue;
-                }
-
-                const combinedVal = (getVal(last) + getVal(normalized)) % 4;
-                result.pop();
-                const combined = valToM(normalized.charAt(0), combinedVal);
-                if (combined) result.push(combined);
+                if (!merged) result.push(move);
             }
             return result;
         }
 
-        function triggerRandomScramble() {
+        let moveQueue = [];
+        let moveHistory = [];
+        let historyCompactAt = HISTORY_COMPACT_LIMIT;
+        let isAnimating = false;
+        let animationRafId = 0;
+        let lastQueueText = '';
+        let lastActionText = '';
+
+        function updateUI(lastMove = null) {
+            const totalPending = moveQueue.length + (isAnimating ? 1 : 0);
+            const queueText = `Sıra: ${totalPending} hərəkət`;
+            if (queueText !== lastQueueText) {
+                lastQueueText = queueText;
+                queueInfoEl.textContent = queueText;
+            }
+            if (lastMove !== null) {
+                const actionText = `Son Hərəkət: ${lastMove}`;
+                if (actionText !== lastActionText) {
+                    lastActionText = actionText;
+                    lastActionEl.textContent = actionText;
+                }
+            }
+        }
+
+        function generateScramble(length) {
             const faces = ['U', 'D', 'R', 'L', 'F', 'B'];
             const modifiers = ['', "'", '2'];
+            const sequence = [];
             let prev = null;
 
-            for (let i = 0; i < 18; i++) {
+            for (let i = 0; i < length; i++) {
                 let face;
                 do { face = faces[Math.floor(Math.random() * faces.length)]; } while (face === prev);
                 prev = face;
                 const mod = modifiers[Math.floor(Math.random() * modifiers.length)];
-                moveQueue.push({ type: 'move', move: face + mod, recordHistory: true });
+                sequence.push(face + mod);
             }
+            return sequence;
+        }
+
+        // Tək token -> normallaşdırılmış hərəkətlər massivi.
+        //  "U", "U'", "U2", "U'2", "U2'"  -> 1 hərəkət (standart notasiya, "U2" = yarım dönüş)
+        //  "U10", "U20", "U'10", "U*5", "UX5", "R2*3" -> təkrarlanan hərəkətlər
+        function parseMoveToken(token) {
+            const single = normalizeMove(token);
+            if (single) return [single];
+
+            const match = token.match(REPEAT_EXPLICIT_RE) || token.match(REPEAT_IMPLICIT_RE);
+            if (!match) return [];
+
+            const base = normalizeMove(match[1]);
+            if (!base) return [];
+
+            const times = Math.min(parseInt(match[2], 10) || 0, MAX_REPEAT);
+            const out = [];
+            for (let i = 0; i < times; i++) out.push(base);
+            return out;
+        }
+
+        function handleIncomingSignal(actionStr) {
+            if (typeof actionStr !== 'string') return false;
+            const clean = sanitizeToken(actionStr.slice(0, MAX_SIGNAL_LENGTH));
+            if (!clean) return false;
+
+            // Boşluq, vergül, nöqtəli vergül və "+" işarəsinə görə bölürük
+            const rawTokens = clean.split(/[\s,;+]+/).filter(Boolean);
+            if (rawTokens.length === 0) return false;
+
+            const tasks = [];
+
+            for (let i = 0; i < rawTokens.length && tasks.length < MAX_QUEUE; i++) {
+                const token = rawTokens[i];
+
+                if (token === 'SOLVE') {
+                    tasks.push({ type: 'solve' });
+                    continue;
+                }
+                if (token === 'SCRAMBLE') {
+                    const scrambleMoves = generateScramble(18);
+                    for (let j = 0; j < scrambleMoves.length; j++) {
+                        tasks.push({ type: 'move', move: scrambleMoves[j], recordHistory: true });
+                    }
+                    continue;
+                }
+
+                const moves = parseMoveToken(token);
+                for (let j = 0; j < moves.length; j++) {
+                    tasks.push({ type: 'move', move: moves[j], recordHistory: true });
+                }
+            }
+
+            if (tasks.length === 0) return false;
+
+            const room = MAX_QUEUE - (moveQueue.length + (isAnimating ? 1 : 0));
+            if (room <= 0) {
+                console.warn('Növbə dolub, siqnal atıldı.');
+                return false;
+            }
+            if (tasks.length > room) {
+                console.warn(`Növbə limiti: ${tasks.length - room} hərəkət atıldı.`);
+                tasks.length = room;
+            }
+
+            for (let k = 0; k < tasks.length; k++) moveQueue.push(tasks[k]);
+
             updateUI();
             processQueue();
+            return true;
+        }
+
+        function getAnimationDuration() {
+            const pending = moveQueue.length;
+            if (pending <= 3) return ANIMATION_DURATION_MAX;
+            return Math.max(ANIMATION_DURATION_MIN, ANIMATION_DURATION_MAX - (pending - 3) * 8);
+        }
+
+        function recordHistory(move) {
+            moveHistory.push(move);
+            if (moveHistory.length > historyCompactAt) {
+                moveHistory = simplifyMoveArray(moveHistory);
+                historyCompactAt = Math.max(HISTORY_COMPACT_LIMIT, moveHistory.length * 2);
+            }
+        }
+
+        function processQueue() {
+            while (!isAnimating && moveQueue.length > 0) {
+                const task = moveQueue.shift();
+
+                if (task.type === 'solve') {
+                    const rawInverse = moveHistory.slice().reverse().map(invertMove).filter(Boolean);
+                    const solution = simplifyMoveArray(rawInverse);
+                    moveHistory = [];
+                    historyCompactAt = HISTORY_COMPACT_LIMIT;
+
+                    // Həll hərəkətləri növbənin əvvəlinə qoyulur (SOLVE-dan sonra gələn tapşırıqlar onlardan sonra icra olunur)
+                    if (solution.length > 0) {
+                        const solutionTasks = solution.map(m => ({ type: 'move', move: m, recordHistory: false }));
+                        moveQueue = solutionTasks.concat(moveQueue);
+                    }
+                    updateUI('SOLVE');
+                    continue;
+                }
+
+                if (task.type !== 'move') continue;
+
+                const config = getMoveConfig(task.move);
+                if (!config) continue;
+
+                isAnimating = true;
+                updateUI(task.move);
+
+                executeMove(config, getAnimationDuration(), () => {
+                    try {
+                        if (task.recordHistory) recordHistory(task.move);
+                    } finally {
+                        isAnimating = false;
+                        processQueue();
+                    }
+                });
+            }
+            updateUI();
+        }
+
+        function executeMove(config, duration, onDone) {
+            const { axis, layerValue, angle, quarterTurns } = config;
+            const axisIndex = axis === 'x' ? 0 : axis === 'y' ? 1 : 2;
+
+            const activeCubies = cubies.filter(c => c.userData.cubeState.grid[axisIndex] === layerValue);
+            const rotationMatrix = rotationMatrix3(axis, quarterTurns);
+
+            // movePivot identik transformdadır: add() kubiklərin lokal transformunu dəyişmir
+            // (attach() isə matris dekompozisiyası ilə float xətası toplayırdı).
+            movePivot.rotation.set(0, 0, 0);
+            for (const cubie of activeCubies) movePivot.add(cubie);
+
+            let startTime = null;
+
+            function finish() {
+                try {
+                    movePivot.rotation.set(0, 0, 0);
+
+                    for (const cubie of activeCubies) {
+                        cubeGroup.add(cubie);
+                        const state = cubie.userData.cubeState;
+
+                        // Yalnız tam ədədlərlə (integer) hesablanır — drift mümkün deyil
+                        state.grid = matVec3(rotationMatrix, state.grid);
+                        state.orientation = matMul3(rotationMatrix, state.orientation);
+
+                        cubie.position.set(state.grid[0] * STEP, state.grid[1] * STEP, state.grid[2] * STEP);
+                        matrix3ToQuaternion(state.orientation, cubie.quaternion);
+                        cubie.scale.set(1, 1, 1);
+                        cubie.updateMatrix();
+                    }
+                } finally {
+                    onDone();
+                }
+            }
+
+            function step(now) {
+                animationRafId = 0;
+                // Vaxt bazası rAF timestamp-ıdır (performance.now() ilə qarışdırılmır)
+                if (startTime === null) startTime = now;
+
+                const progress = Math.min(Math.max((now - startTime) / duration, 0), 1);
+                const easeProgress = 1 - Math.pow(1 - progress, 2);
+                const currentAngle = angle * easeProgress;
+
+                if (axis === 'x') movePivot.rotation.x = currentAngle;
+                else if (axis === 'y') movePivot.rotation.y = currentAngle;
+                else movePivot.rotation.z = currentAngle;
+
+                if (progress < 1) {
+                    animationRafId = requestAnimationFrame(step);
+                    return;
+                }
+                finish();
+            }
+
+            animationRafId = requestAnimationFrame(step);
         }
 
         // ============================================================
@@ -648,144 +779,286 @@
         const wsUrl = urlParams.get('ws');
         const directMove = urlParams.get('move');
 
-        if (directMove) handleIncomingSignal(directMove);
+        const ACTION_KEYS = ['action', 'move', 'command', 'data', 'type'];
+        const COUNT_KEYS = ['count', 'repeat', 'amount', 'repeatCount', 'qty'];
 
-        function extractSignal(payload) {
+        function readCount(payload) {
+            for (let i = 0; i < COUNT_KEYS.length; i++) {
+                const raw = payload[COUNT_KEYS[i]];
+                if (raw === undefined || raw === null || raw === '') continue;
+                const n = parseInt(raw, 10);
+                if (Number.isFinite(n)) return Math.min(Math.max(n, 0), MAX_REPEAT);
+            }
+            return 1;
+        }
+
+        function extractSignal(payload, depth = 0) {
+            if (payload === null || payload === undefined || depth > 4) return null;
+
             if (typeof payload === 'string') {
                 const clean = payload.trim();
                 if (!clean) return null;
                 if ((clean.startsWith('{') && clean.endsWith('}')) || (clean.startsWith('[') && clean.endsWith(']'))) {
-                    try { return extractSignal(JSON.parse(clean)); } catch (_) {}
+                    try { return extractSignal(JSON.parse(clean), depth + 1); } catch (_) { return clean; }
                 }
                 return clean;
             }
-            if (payload && typeof payload === 'object') {
-                return payload.action || payload.move || payload.command || (payload.type === 'SOLVE' ? 'SOLVE' : null);
+
+            if (Array.isArray(payload)) {
+                const parts = payload.slice(0, MAX_QUEUE).map(p => extractSignal(p, depth + 1)).filter(Boolean);
+                return parts.length ? parts.join(' ') : null;
             }
+
+            if (typeof payload === 'object') {
+                let action = null;
+                for (let i = 0; i < ACTION_KEYS.length && !action; i++) {
+                    const value = payload[ACTION_KEYS[i]];
+                    if (value !== undefined && value !== null && value !== '') {
+                        action = extractSignal(value, depth + 1);
+                    }
+                }
+                if (!action) return null;
+
+                const count = readCount(payload);
+                if (count <= 0) return null;
+                return count > 1 ? Array(count).fill(action).join(' ') : action;
+            }
+
             return null;
+        }
+
+        function processRawPayload(data) {
+            const signal = extractSignal(data);
+            if (signal) handleIncomingSignal(signal);
         }
 
         let socket = null;
         let reconnectTimer = null;
+        let reconnectDelay = WS_RECONNECT_DELAY;
+        let wantSocket = true;
+
+        function scheduleReconnect() {
+            if (!wantSocket || reconnectTimer !== null) return;
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                connectWebSocket();
+            }, reconnectDelay);
+            reconnectDelay = Math.min(Math.round(reconnectDelay * 1.5), WS_RECONNECT_DELAY_MAX);
+        }
 
         function connectWebSocket() {
-            if (!wsUrl) return;
+            if (!wsUrl || !wantSocket) return;
+            if (!/^wss?:\/\//i.test(wsUrl)) {
+                console.error('WebSocket URL ws:// və ya wss:// ilə başlamalıdır.');
+                return;
+            }
+
+            let ws;
             try {
-                socket = new WebSocket(wsUrl);
-                socket.onopen = () => console.info('WebSocket qoşuldu.');
-                socket.onmessage = e => {
-                    const signal = extractSignal(e.data);
-                    if (signal) handleIncomingSignal(signal);
-                };
-                socket.onclose = () => {
-                    if (reconnectTimer === null) {
-                        reconnectTimer = setTimeout(() => {
-                            reconnectTimer = null;
-                            connectWebSocket();
-                        }, WS_RECONNECT_DELAY);
-                    }
-                };
+                ws = new WebSocket(wsUrl);
             } catch (err) {
                 console.error('WS Error:', err);
+                return;
+            }
+            socket = ws;
+
+            ws.onopen = () => {
+                reconnectDelay = WS_RECONNECT_DELAY;
+                console.info('WebSocket qoşuldu.');
+            };
+            ws.onmessage = e => {
+                const data = e.data;
+                if (typeof data === 'string') {
+                    processRawPayload(data);
+                } else if (typeof Blob !== 'undefined' && data instanceof Blob) {
+                    data.text().then(processRawPayload).catch(() => {});
+                } else if (data instanceof ArrayBuffer) {
+                    processRawPayload(new TextDecoder().decode(data));
+                }
+            };
+            ws.onclose = () => {
+                if (ws !== socket) return;
+                socket = null;
+                scheduleReconnect();
+            };
+        }
+
+        function closeSocket() {
+            wantSocket = false;
+            if (reconnectTimer !== null) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            if (socket) {
+                const ws = socket;
+                socket = null;
+                ws.onopen = ws.onmessage = ws.onclose = null;
+                try { ws.close(); } catch (_) { /* artıq bağlıdır */ }
             }
         }
 
+        if (directMove) handleIncomingSignal(directMove);
         connectWebSocket();
 
-        window.addEventListener('message', e => {
-            const signal = extractSignal(e.data);
-            if (signal) handleIncomingSignal(signal);
-        });
+        on(window, 'message', e => processRawPayload(e.data));
 
-        buttons.forEach(btn => {
-            btn.addEventListener('click', () => {
-                const move = btn.getAttribute('data-move');
-                const action = btn.getAttribute('data-action');
-                handleIncomingSignal(move || action || '');
-            });
+        // Event delegation: bütün düymələr üçün tək listener
+        on(controlsPanel, 'click', e => {
+            const btn = e.target && e.target.closest ? e.target.closest('button') : null;
+            if (!btn || !controlsPanel.contains(btn)) return;
+            handleIncomingSignal(btn.getAttribute('data-move') || btn.getAttribute('data-action') || '');
         });
 
         // ============================================================
-        // 6) DUAL VIEWPORT RENDER LOOP (HIGH-DPI PIXEL PERFECT)
+        // 6) DUAL VIEWPORT LAYOUT VƏ RENDER LOOP
         // ============================================================
-        const TWO_PI = Math.PI * 2;
-        let previousFrameTime = performance.now();
-        let lastDrawingBufferWidth = 0;
-        let lastDrawingBufferHeight = 0;
-        const drawingBufferSize = new THREE.Vector2();
+        // QAYDA: three.js setViewport/setScissor dəyərlərini CSS pikselində qəbul edir və
+        // daxildə özü renderer.getPixelRatio() ilə vurur. Ona görə burada devicePixelRatio
+        // ƏLAVƏ VURULMUR (əks halda Retina/telefonlarda ikiqat miqyas və sürüşmə olur).
+        // WebGL koordinat mənbəyi sol-ALT küncdədir, HTML-də sol-ÜST — Y burada çevrilir.
+        const view = { w: 1, h: 1, pipX: 0, pipY: 0, pipW: 0, pipH: 0, dirty: true };
 
-        function updateCameraAndRendererSize() {
-            const cssWidth = Math.max(container.clientWidth, 1);
-            const cssHeight = Math.max(container.clientHeight, 1);
+        function placeCamera(camera, sign, aspect) {
+            // Kub və mini görünüş hər aspektdə tam sığsın (dar ekranda kəsilmə olmasın)
+            const vHalf = (camera.fov * Math.PI / 180) / 2;
+            const hHalf = Math.atan(Math.tan(vHalf) * aspect);
+            const minHalf = Math.min(vHalf, hHalf);
+            const distance = Math.max(BASE_DISTANCE, (BOUNDING_RADIUS / Math.sin(minHalf)) * 1.05);
 
-            mainCamera.aspect = cssWidth / cssHeight;
-            mainCamera.updateProjectionMatrix();
-
-            const miniCssWidth = Math.max(Math.floor(cssWidth * 0.32), 1);
-            const miniCssHeight = Math.max(Math.floor(cssHeight * 0.32), 1);
-            secondaryCamera.aspect = miniCssWidth / miniCssHeight;
-            secondaryCamera.updateProjectionMatrix();
-
-            renderer.setSize(cssWidth, cssHeight, false);
-            renderer.getDrawingBufferSize(drawingBufferSize);
-            lastDrawingBufferWidth = Math.max(Math.floor(drawingBufferSize.x), 1);
-            lastDrawingBufferHeight = Math.max(Math.floor(drawingBufferSize.y), 1);
+            camera.position.copy(VIEW_DIR).multiplyScalar(sign * distance);
+            camera.lookAt(0, 0, 0);
         }
 
-        updateCameraAndRendererSize();
+        function syncLayout() {
+            const canvasRect = renderer.domElement.getBoundingClientRect();
+            const cssW = canvasRect.width;
+            const cssH = canvasRect.height;
+            if (cssW < 1 || cssH < 1) return false;
+
+            const pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
+            if (renderer.getPixelRatio() !== pixelRatio) renderer.setPixelRatio(pixelRatio);
+            renderer.setSize(cssW, cssH, false);
+            renderer.setScissorTest(true);
+
+            const pipRect = pipFrame.getBoundingClientRect();
+            view.pipX = pipRect.left - canvasRect.left;
+            view.pipY = canvasRect.bottom - pipRect.bottom;   // WebGL Y-flip
+            view.pipW = pipRect.width;
+            view.pipH = pipRect.height;
+
+            mainCamera.aspect = cssW / cssH;
+            mainCamera.updateProjectionMatrix();
+            placeCamera(mainCamera, 1, mainCamera.aspect);
+
+            if (view.pipW >= 1 && view.pipH >= 1) {
+                secondaryCamera.aspect = view.pipW / view.pipH;
+                secondaryCamera.updateProjectionMatrix();
+                placeCamera(secondaryCamera, -1, secondaryCamera.aspect);
+            }
+
+            view.w = cssW;
+            view.h = cssH;
+            view.dirty = false;
+            return true;
+        }
+
+        const markLayoutDirty = () => { view.dirty = true; };
+
+        let resizeObserver = null;
+        if (typeof ResizeObserver !== 'undefined') {
+            resizeObserver = new ResizeObserver(markLayoutDirty);
+            resizeObserver.observe(container);
+            resizeObserver.observe(pipFrame);
+        }
+        on(window, 'resize', markLayoutDirty, { passive: true });
+        on(window, 'orientationchange', markLayoutDirty, { passive: true });
+        if (window.visualViewport) on(window.visualViewport, 'resize', markLayoutDirty, { passive: true });
+
+        let running = false;
+        let rafId = 0;
+        let previousFrameTime = performance.now();
 
         function render(now) {
-            requestAnimationFrame(render);
+            if (!running) return;
+            rafId = requestAnimationFrame(render);
 
             const delta = Math.min(Math.max((now - previousFrameTime) / 1000, 0), 0.05);
             previousFrameTime = now;
 
             cubeGroup.rotation.y = (cubeGroup.rotation.y + AUTO_SPIN_SPEED * delta) % TWO_PI;
 
-            const width = lastDrawingBufferWidth;
-            const height = lastDrawingBufferHeight;
-            if (width <= 0 || height <= 0) return;
+            if (view.dirty && !syncLayout()) return;
 
-            // 1. ƏSAS KAMERA RENDERİ (Tam Ekran)
-            renderer.setViewport(0, 0, width, height);
-            renderer.setScissor(0, 0, width, height);
+            // Scissor test hər kadrda təsdiqlənir (WebGL context bərpasından sonra da təhlükəsizdir)
+            renderer.setScissorTest(true);
+
+            // 1. ƏSAS KAMERA (tam canvas)
+            renderer.setViewport(0, 0, view.w, view.h);
+            renderer.setScissor(0, 0, view.w, view.h);
             renderer.render(scene, mainCamera);
 
-            // 2. MİNİ KAMERA RENDERİ (Aşağı-Sağ Pəncərə — WebGL Bufer Koordinatları ilə)
-            const miniW = Math.max(Math.floor(width * 0.32), 1);
-            const miniH = Math.max(Math.floor(height * 0.32), 1);
-            const miniMarginX = Math.max(Math.floor(width * 0.012), 8);
-            const miniMarginY = Math.max(Math.floor(height * 0.012), 8);
-            const miniX = Math.max(width - miniW - miniMarginX, 0);
-            const miniY = miniMarginY;
-
-            renderer.setViewport(miniX, miniY, miniW, miniH);
-            renderer.setScissor(miniX, miniY, miniW, miniH);
-            renderer.render(scene, secondaryCamera);
-
-            // Render bitdikdə çərçivəni bərpa edirik
-            renderer.setViewport(0, 0, width, height);
-            renderer.setScissor(0, 0, width, height);
+            // 2. MİNİ KAMERA (dəqiq #pip-frame daxilində)
+            if (view.pipW >= 1 && view.pipH >= 1) {
+                renderer.setViewport(view.pipX, view.pipY, view.pipW, view.pipH);
+                renderer.setScissor(view.pipX, view.pipY, view.pipW, view.pipH);
+                renderer.render(scene, secondaryCamera);
+            }
         }
 
-        requestAnimationFrame(render);
+        function startLoop() {
+            if (running) return;
+            running = true;
+            previousFrameTime = performance.now();
+            rafId = requestAnimationFrame(render);
+        }
 
-        let resizeTimer = 0;
-        window.addEventListener('resize', () => {
-            clearTimeout(resizeTimer);
-            resizeTimer = setTimeout(updateCameraAndRendererSize, 50);
-        }, { passive: true });
+        function stopLoop() {
+            running = false;
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = 0;
+        }
 
-        window.addEventListener('orientationchange', updateCameraAndRendererSize, { passive: true });
+        // ============================================================
+        // 7) RESURS İDARƏSİ (TƏMİZLƏMƏ)
+        // ============================================================
+        function disposeAll() {
+            stopLoop();
+            if (animationRafId) {
+                cancelAnimationFrame(animationRafId);
+                animationRafId = 0;
+            }
+            closeSocket();
+            if (resizeObserver) {
+                resizeObserver.disconnect();
+                resizeObserver = null;
+            }
+            lifecycle.abort(); // bütün on(...) listener-ləri silinir
 
-        window.addEventListener('beforeunload', () => {
+            for (const cubie of cubies) cubie.geometry.dispose();
             baseBoxGeometry.dispose();
             sharedEdgeGeometry.dispose();
             sharedEdgeMaterial.dispose();
             sharedCubieMaterial.dispose();
             renderer.dispose();
+            renderer.forceContextLoss();
+        }
+
+        // beforeunload mobil brauzerlərdə etibarsızdır; pagehide həm masaüstündə, həm mobildə işləyir.
+        on(window, 'pagehide', e => {
+            closeSocket();
+            if (!e.persisted) disposeAll();
+        });
+        // bfcache-dən qayıdanda WebSocket yenidən qoşulur
+        on(window, 'pageshow', e => {
+            if (e.persisted) {
+                wantSocket = true;
+                reconnectDelay = WS_RECONNECT_DELAY;
+                connectWebSocket();
+            }
         });
 
+        syncLayout();
+        startLoop();
         updateUI();
     </script>
 </body>
