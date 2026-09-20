@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0d0e15">
+    <title>TikTok İnteraktiv 3D Rubik Kubu — Dual Viewport Ultimate</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            min-height: 100vh;
+            min-height: 100dvh;
+        }
+
+        body {
+            background: #0d0e15;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 72%;
+            position: relative;
+            flex: 0 0 72%;
+            overflow: hidden;
+            background: #0d0e15;
+        }
+
+        #canvas-container canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            right: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 8px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .status-badge {
+            background: rgba(22, 27, 34, 0.88);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            padding: 6px 14px;
+            border-radius: 18px;
+            font-size: 13px;
+            font-weight: 600;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 48%;
+        }
+
+        #queue-info { color: #00f2fe; }
+        #last-action { color: #ff007f; }
+
+        #pip-frame {
+            position: absolute;
+            right: 12px;
+            bottom: 12px;
+            width: 32%;
+            aspect-ratio: 1 / 1;
+            border: 2px solid rgba(0, 242, 254, 0.9);
+            border-radius: 10px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 242, 254, 0.12);
+            pointer-events: none;
+            z-index: 9;
+        }
+
+        #pip-label {
+            position: absolute;
+            right: 18px;
+            bottom: 18px;
+            background: rgba(0, 0, 0, 0.65);
+            border: 1px solid rgba(0, 242, 254, 0.5);
+            color: #00f2fe;
+            padding: 3px 7px;
+            border-radius: 6px;
+            font-size: 9px;
+            font-weight: 800;
+            letter-spacing: 0.3px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #controls-panel {
+            width: 100vw;
+            height: 28%;
+            flex: 0 0 28%;
+            background: rgba(15, 17, 23, 0.98);
+            border-top: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            justify-content: center;
+            z-index: 10;
+        }
+
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            justify-content: center;
+        }
+
+        button {
+            background: #1e2230;
+            color: #fff;
+            border: 1px solid #3a3f55;
+            padding: 8px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            min-width: 42px;
+            transition: background 0.1s, transform 0.1s;
+        }
+
+        button:active {
+            background: #ff007f;
+            transform: translateY(1px);
+        }
+
+        .btn-solve {
+            background: linear-gradient(45deg, #00c6ff, #0072ff);
+            border: none;
+            color: #fff;
+            flex-grow: 1;
+            padding: 10px;
+            font-size: 13px;
+        }
+
+        .btn-scramble {
+            background: linear-gradient(45deg, #f7971e, #ffd200);
+            border: none;
+            color: #000;
+            flex-grow: 1;
+            padding: 10px;
+            font-size: 13px;
+        }
+
+        @media (max-width: 420px) {
+            #ui-overlay { top: 8px; left: 8px; right: 8px; }
+            .status-badge { padding: 5px 9px; font-size: 11px; }
+            #pip-frame { right: 8px; bottom: 8px; width: 34%; }
+            #pip-label { right: 12px; bottom: 12px; font-size: 8px; padding: 2px 5px; }
+            #controls-panel { padding: 8px; gap: 6px; }
+            .btn-group { gap: 4px; }
+            button { min-width: 38px; padding: 7px 8px; font-size: 11px; }
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="canvas-container">
+        <div id="ui-overlay">
+            <div class="status-badge" id="queue-info">Sıra: 0 hərəkət</div>
+            <div class="status-badge" id="last-action">Son Hərəkət: -</div>
+        </div>
+        <div id="pip-frame" aria-hidden="true"></div>
+        <div id="pip-label" aria-hidden="true">ALT / ARXA GÖRÜNÜŞ</div>
+    </div>
+
+    <div id="controls-panel">
+        <div class="btn-group">
+            <button type="button" data-move="U">U</button>
+            <button type="button" data-move="U'">U'</button>
+            <button type="button" data-move="R">R</button>
+            <button type="button" data-move="R'">R'</button>
+            <button type="button" data-move="L">L</button>
+            <button type="button" data-move="L'">L'</button>
+            <button type="button" data-move="F">F</button>
+            <button type="button" data-move="F'">F'</button>
+            <button type="button" data-move="B">B</button>
+            <button type="button" data-move="B'">B'</button>
+            <button type="button" data-move="D">D</button>
+            <button type="button" data-move="D'">D'</button>
+        </div>
+        <div class="btn-group">
+            <button type="button" class="btn-scramble" data-action="SCRAMBLE">QARIŞDIR (SCRAMBLE)</button>
+            <button type="button" class="btn-solve" data-action="SOLVE">HƏLL ET (SOLVE)</button>
+        </div>
+    </div>
+
+    <script>
+        'use strict';
+
+        // ============================================================
+        // 1) THREE.JS SƏHNƏSİ VƏ DUAL KAMERA
+        // ============================================================
+        const container = document.getElementById('canvas-container');
+        const queueInfoEl = document.getElementById('queue-info');
+        const lastActionEl = document.getElementById('last-action');
+        const buttons = document.querySelectorAll('button[data-move], button[data-action]');
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0d0e15);
+
+        const initialAspect = Math.max(container.clientWidth, 1) / Math.max(container.clientHeight, 1);
+
+        const mainCamera = new THREE.PerspectiveCamera(45, initialAspect, 0.1, 1000);
+        mainCamera.position.set(5.5, 5.5, 7.5);
+        mainCamera.lookAt(0, 0, 0);
+
+        const secondaryCamera = new THREE.PerspectiveCamera(45, initialAspect, 0.1, 1000);
+        secondaryCamera.position.set(-5.5, -5.5, -7.5);
+        secondaryCamera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            alpha: false,
+            powerPreference: 'high-performance'
+        });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+        renderer.setSize(container.clientWidth, container.clientHeight, false);
+        renderer.setScissorTest(true);
+        renderer.setClearColor(0x0d0e15, 1);
+        container.insertBefore(renderer.domElement, container.firstChild);
+
+        // İşıqlandırma
+        scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+
+        const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.6);
+        dirLight1.position.set(10, 20, 15);
+        scene.add(dirLight1);
+
+        const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.6);
+        dirLight2.position.set(-10, -20, -15);
+        scene.add(dirLight2);
+
+        // ============================================================
+        // 2) KUB GEOMETRİYASI VƏ İNTEGER STATE ENGINE
+        // ============================================================
+        const CUBE_SIZE = 0.96;
+        const GAP = 0.04;
+        const STEP = CUBE_SIZE + GAP;
+
+        const COLOR_MAP = {
+            R: 0xb71234, L: 0xff5800, U: 0xffffff,
+            D: 0xffd500, F: 0x009e60, B: 0x0051ba, INNER: 0x111111
+        };
+
+        const cubies = [];
+        const cubeGroup = new THREE.Group();
+        scene.add(cubeGroup);
+
+        const movePivot = new THREE.Group();
+        cubeGroup.add(movePivot);
+
+        const baseBoxGeometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
+        const sharedEdgeGeometry = new THREE.EdgesGeometry(baseBoxGeometry);
+        const sharedEdgeMaterial = new THREE.LineBasicMaterial({ color: 0x000000 });
+        const sharedCubieMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+
+        function hexToRgb01(hex) {
+            const color = new THREE.Color(hex);
+            return [color.r, color.g, color.b];
+        }
+
+        function createCubie(x, y, z) {
+            const geometry = baseBoxGeometry.clone();
+            const normal = geometry.getAttribute('normal');
+            const colors = new Float32Array(normal.count * 3);
+
+            for (let i = 0; i < normal.count; i++) {
+                const nx = normal.getX(i);
+                const ny = normal.getY(i);
+                const nz = normal.getZ(i);
+                let colorHex = COLOR_MAP.INNER;
+
+                if (nx > 0.5) colorHex = x === 1 ? COLOR_MAP.R : COLOR_MAP.INNER;
+                else if (nx < -0.5) colorHex = x === -1 ? COLOR_MAP.L : COLOR_MAP.INNER;
+                else if (ny > 0.5) colorHex = y === 1 ? COLOR_MAP.U : COLOR_MAP.INNER;
+                else if (ny < -0.5) colorHex = y === -1 ? COLOR_MAP.D : COLOR_MAP.INNER;
+                else if (nz > 0.5) colorHex = z === 1 ? COLOR_MAP.F : COLOR_MAP.INNER;
+                else if (nz < -0.5) colorHex = z === -1 ? COLOR_MAP.B : COLOR_MAP.INNER;
+
+                const [r, g, b] = hexToRgb01(colorHex);
+                colors[i * 3] = r;
+                colors[i * 3 + 1] = g;
+                colors[i * 3 + 2] = b;
+            }
+
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+            const mesh = new THREE.Mesh(geometry, sharedCubieMaterial);
+            mesh.position.set(x * STEP, y * STEP, z * STEP);
+
+            mesh.userData.cubeState = {
+                grid: [x, y, z],
+                orientation: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+            };
+
+            const line = new THREE.LineSegments(sharedEdgeGeometry, sharedEdgeMaterial);
+            line.renderOrder = 1;
+            mesh.add(line);
+            return mesh;
+        }
+
+        for (let x = -1; x <= 1; x++) {
+            for (let y = -1; y <= 1; y++) {
+                for (let z = -1; z <= 1; z++) {
+                    const cubie = createCubie(x, y, z);
+                    cubies.push(cubie);
+                    cubeGroup.add(cubie);
+                }
+            }
+        }
+
+        // ============================================================
+        // 3) DƏQİQ INTEGER 3x3 MATRİS ƏMƏLİYYATLARI
+        // ============================================================
+        function mod4(n) { return ((n % 4) + 4) % 4; }
+
+        function normalizeQuarterTurns(q) {
+            const n = mod4(q);
+            if (n === 0) return 0;
+            if (n === 1) return 1;
+            if (n === 2) return 2;
+            return -1;
+        }
+
+        function matMul3(a, b) {
+            return [
+                a[0]*b[0] + a[1]*b[3] + a[2]*b[6],
+                a[0]*b[1] + a[1]*b[4] + a[2]*b[7],
+                a[0]*b[2] + a[1]*b[5] + a[2]*b[8],
+                a[3]*b[0] + a[4]*b[3] + a[5]*b[6],
+                a[3]*b[1] + a[4]*b[4] + a[5]*b[7],
+                a[3]*b[2] + a[4]*b[5] + a[5]*b[8],
+                a[6]*b[0] + a[7]*b[3] + a[8]*b[6],
+                a[6]*b[1] + a[7]*b[4] + a[8]*b[7],
+                a[6]*b[2] + a[7]*b[5] + a[8]*b[8]
+            ];
+        }
+
+        function matVec3(m, v) {
+            return [
+                m[0]*v[0] + m[1]*v[1] + m[2]*v[2],
+                m[3]*v[0] + m[4]*v[1] + m[5]*v[2],
+                m[6]*v[0] + m[7]*v[1] + m[8]*v[2]
+            ];
+        }
+
+        function identity3() { return [1, 0, 0, 0, 1, 0, 0, 0, 1]; }
+
+        function rotationMatrix3(axis, quarterTurns) {
+            const q = normalizeQuarterTurns(quarterTurns);
+            if (q === 0) return identity3();
+
+            if (axis === 'x') {
+                if (q === 1) return [1, 0, 0, 0, 0, -1, 0, 1, 0];
+                if (q === -1) return [1, 0, 0, 0, 0, 1, 0, -1, 0];
+                return [1, 0, 0, 0, -1, 0, 0, 0, -1];
+            }
+            if (axis === 'y') {
+                if (q === 1) return [0, 0, 1, 0, 1, 0, -1, 0, 0];
+                if (q === -1) return [0, 0, -1, 0, 1, 0, 1, 0, 0];
+                return [-1, 0, 0, 0, 1, 0, 0, 0, -1];
+            }
+            if (axis === 'z') {
+                if (q === 1) return [0, -1, 0, 1, 0, 0, 0, 0, 1];
+                if (q === -1) return [0, 1, 0, -1, 0, 0, 0, 0, 1];
+                return [-1, 0, 0, 0, -1, 0, 0, 0, 1];
+            }
+        }
+
+        function matrix3ToQuaternion(m, targetQuaternion) {
+            const matrix = new THREE.Matrix4().set(
+                m[0], m[1], m[2], 0,
+                m[3], m[4], m[5], 0,
+                m[6], m[7], m[8], 0,
+                0,    0,    0,    1
+            );
+            targetQuaternion.setFromRotationMatrix(matrix).normalize();
+        }
+
+        // ============================================================
+        // 4) FIFO NÖVBƏSİ VƏ HƏRƏKƏT İCRA SİSTEMİ
+        // ============================================================
+        const VALID_MOVE_RE = /^[URFDLB](?:2|')?$/;
+        const MOVE_BASE = Object.freeze({
+            R: Object.freeze({ axis: 'x', layerValue:  1, quarterTurns: -1 }),
+            L: Object.freeze({ axis: 'x', layerValue: -1, quarterTurns:  1 }),
+            U: Object.freeze({ axis: 'y', layerValue:  1, quarterTurns: -1 }),
+            D: Object.freeze({ axis: 'y', layerValue: -1, quarterTurns:  1 }),
+            F: Object.freeze({ axis: 'z', layerValue:  1, quarterTurns: -1 }),
+            B: Object.freeze({ axis: 'z', layerValue: -1, quarterTurns:  1 })
+        });
+
+        function isValidMove(move) {
+            return typeof move === 'string' && VALID_MOVE_RE.test(move);
+        }
+
+        // Mobil klaviatura əyri dırnaqlarını (smart-quotes) düzgün ' simvoluna çevirir
+        function sanitizeToken(raw) {
+            return String(raw)
+                .replace(/[\u2018\u2019\u201B\u2032\u02BC\u00B4`]/g, "'")
+                .trim()
+                .toUpperCase();
+        }
+
+        function normalizeMove(move) {
+            if (typeof move !== 'string') return null;
+            let clean = sanitizeToken(move).replace(/\s+/g, '');
+            if (/^[URFDLB](?:2'|'2)$/.test(clean)) clean = clean.charAt(0) + '2';
+            return isValidMove(clean) ? clean : null;
+        }
+
+        function getMoveConfig(moveStr) {
+            const move = normalizeMove(moveStr);
+            if (!move) return null;
+
+            const face = move[0];
+            const prime = move.includes("'");
+            const doubleTurn = move.includes('2');
+            let quarterTurns = MOVE_BASE[face].quarterTurns;
+
+            if (prime) quarterTurns *= -1;
+            if (doubleTurn) quarterTurns *= 2;
+            quarterTurns = normalizeQuarterTurns(quarterTurns);
+
+            const base = MOVE_BASE[face];
+            return {
+                face,
+                axis: base.axis,
+                layerValue: base.layerValue,
+                quarterTurns,
+                angle: quarterTurns * Math.PI / 2
+            };
+        }
+
+        const moveQueue = [];
+        let moveHistory = [];
+        let isAnimating = false;
+        const ANIMATION_DURATION = 150;
+        const AUTO_SPIN_SPEED = 0.15;
+        const WS_RECONNECT_DELAY = 2000;
+
+        function updateUI(lastMove = null) {
+            const totalPending = moveQueue.length + (isAnimating ? 1 : 0);
+            queueInfoEl.textContent = `Sıra: ${totalPending} hərəkət`;
+            if (lastMove !== null) lastActionEl.textContent = `Son Hərəkət: ${lastMove}`;
+        }
+
+        function enqueueMove(move, recordHistory = true) {
+            const normalized = normalizeMove(move);
+            if (!normalized) return false;
+            moveQueue.push({ type: 'move', move: normalized, recordHistory });
+            updateUI();
+            processQueue();
+            return true;
+        }
+
+        function handleIncomingSignal(actionStr) {
+            if (typeof actionStr !== 'string') return false;
+            const clean = sanitizeToken(actionStr);
+            if (!clean) return false;
+
+            if (clean === 'SOLVE') {
+                moveQueue.push({ type: 'solve' });
+                updateUI();
+                processQueue();
+                return true;
+            }
+
+            if (clean === 'SCRAMBLE') {
+                triggerRandomScramble();
+                return true;
+            }
+
+            return enqueueMove(clean, true);
+        }
+
+        function processQueue() {
+            if (isAnimating || moveQueue.length === 0) {
+                updateUI();
+                return;
+            }
+
+            const task = moveQueue.shift();
+
+            if (task.type === 'solve') {
+                const rawInverse = moveHistory.slice().reverse().map(invertMove).filter(Boolean);
+                const solution = simplifyMoveArray(rawInverse);
+                moveHistory = [];
+
+                for (let i = solution.length - 1; i >= 0; i--) {
+                    moveQueue.unshift({ type: 'move', move: solution[i], recordHistory: false });
+                }
+
+                updateUI();
+                processQueue();
+                return;
+            }
+
+            if (task.type !== 'move') {
+                processQueue();
+                return;
+            }
+
+            isAnimating = true;
+            updateUI(task.move);
+
+            executeMove(task.move, () => {
+                if (task.recordHistory) moveHistory.push(task.move);
+                isAnimating = false;
+                updateUI();
+                processQueue();
+            });
+        }
+
+        function executeMove(moveStr, callback) {
+            const config = getMoveConfig(moveStr);
+            if (!config) {
+                if (typeof callback === 'function') callback();
+                return;
+            }
+
+            const { axis, layerValue, angle, quarterTurns } = config;
+            const axisIndex = axis === 'x' ? 0 : axis === 'y' ? 1 : 2;
+
+            const activeCubies = cubies.filter(c => c.userData.cubeState.grid[axisIndex] === layerValue);
+            const rotationMatrix = rotationMatrix3(axis, quarterTurns);
+
+            movePivot.rotation.set(0, 0, 0);
+            for (const cubie of activeCubies) movePivot.attach(cubie);
+
+            const startTime = performance.now();
+
+            function animateRotation(now) {
+                const elapsed = now - startTime;
+                const progress = Math.min(Math.max(elapsed / ANIMATION_DURATION, 0), 1);
+                const easeProgress = 1 - Math.pow(1 - progress, 2);
+                const currentAngle = angle * easeProgress;
+
+                if (axis === 'x') movePivot.rotation.x = currentAngle;
+                else if (axis === 'y') movePivot.rotation.y = currentAngle;
+                else movePivot.rotation.z = currentAngle;
+
+                if (progress < 1) {
+                    requestAnimationFrame(animateRotation);
+                    return;
+                }
+
+                movePivot.rotation.set(0, 0, 0);
+
+                for (const cubie of activeCubies) {
+                    cubeGroup.attach(cubie);
+                    const state = cubie.userData.cubeState;
+
+                    state.grid = matVec3(rotationMatrix, state.grid);
+                    state.orientation = matMul3(rotationMatrix, state.orientation);
+
+                    cubie.position.set(state.grid[0] * STEP, state.grid[1] * STEP, state.grid[2] * STEP);
+                    matrix3ToQuaternion(state.orientation, cubie.quaternion);
+                    cubie.updateMatrix();
+                }
+
+                if (typeof callback === 'function') callback();
+            }
+
+            requestAnimationFrame(animateRotation);
+        }
+
+        function invertMove(move) {
+            const normalized = normalizeMove(move);
+            if (!normalized) return null;
+            if (normalized.endsWith('2')) return normalized;
+            if (normalized.endsWith("'")) return normalized.charAt(0);
+            return normalized + "'";
+        }
+
+        function simplifyMoveArray(moves) {
+            const result = [];
+            const getVal = m => m.endsWith('2') ? 2 : m.endsWith("'") ? 3 : 1;
+            const valToM = (f, v) => v === 0 ? null : v === 1 ? f : v === 2 ? f + '2' : f + "'";
+
+            for (const move of moves) {
+                const normalized = normalizeMove(move);
+                if (!normalized) continue;
+
+                if (result.length === 0) {
+                    result.push(normalized);
+                    continue;
+                }
+
+                const last = result[result.length - 1];
+                if (last.charAt(0) !== normalized.charAt(0)) {
+                    result.push(normalized);
+                    continue;
+                }
+
+                const combinedVal = (getVal(last) + getVal(normalized)) % 4;
+                result.pop();
+                const combined = valToM(normalized.charAt(0), combinedVal);
+                if (combined) result.push(combined);
+            }
+            return result;
+        }
+
+        function triggerRandomScramble() {
+            const faces = ['U', 'D', 'R', 'L', 'F', 'B'];
+            const modifiers = ['', "'", '2'];
+            let prev = null;
+
+            for (let i = 0; i < 18; i++) {
+                let face;
+                do { face = faces[Math.floor(Math.random() * faces.length)]; } while (face === prev);
+                prev = face;
+                const mod = modifiers[Math.floor(Math.random() * modifiers.length)];
+                moveQueue.push({ type: 'move', move: face + mod, recordHistory: true });
+            }
+            updateUI();
+            processQueue();
+        }
+
+        // ============================================================
+        // 5) SİQNAL İNTEQRASİYASI VƏ AVTO-RECONNECT WEBSOCKET
+        // ============================================================
+        const urlParams = new URLSearchParams(window.location.search);
+        const wsUrl = urlParams.get('ws');
+        const directMove = urlParams.get('move');
+
+        if (directMove) handleIncomingSignal(directMove);
+
+        function extractSignal(payload) {
+            if (typeof payload === 'string') {
+                const clean = payload.trim();
+                if (!clean) return null;
+                if ((clean.startsWith('{') && clean.endsWith('}')) || (clean.startsWith('[') && clean.endsWith(']'))) {
+                    try { return extractSignal(JSON.parse(clean)); } catch (_) {}
+                }
+                return clean;
+            }
+            if (payload && typeof payload === 'object') {
+                return payload.action || payload.move || payload.command || (payload.type === 'SOLVE' ? 'SOLVE' : null);
+            }
+            return null;
+        }
+
+        let socket = null;
+        let reconnectTimer = null;
+
+        function connectWebSocket() {
+            if (!wsUrl) return;
+            try {
+                socket = new WebSocket(wsUrl);
+                socket.onopen = () => console.info('WebSocket qoşuldu.');
+                socket.onmessage = e => {
+                    const signal = extractSignal(e.data);
+                    if (signal) handleIncomingSignal(signal);
+                };
+                socket.onclose = () => {
+                    if (reconnectTimer === null) {
+                        reconnectTimer = setTimeout(() => {
+                            reconnectTimer = null;
+                            connectWebSocket();
+                        }, WS_RECONNECT_DELAY);
+                    }
+                };
+            } catch (err) {
+                console.error('WS Error:', err);
+            }
+        }
+
+        connectWebSocket();
+
+        window.addEventListener('message', e => {
+            const signal = extractSignal(e.data);
+            if (signal) handleIncomingSignal(signal);
+        });
+
+        buttons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const move = btn.getAttribute('data-move');
+                const action = btn.getAttribute('data-action');
+                handleIncomingSignal(move || action || '');
+            });
+        });
+
+        // ============================================================
+        // 6) DUAL VIEWPORT RENDER LOOP (HIGH-DPI PIXEL PERFECT)
+        // ============================================================
+        const TWO_PI = Math.PI * 2;
+        let previousFrameTime = performance.now();
+        let lastDrawingBufferWidth = 0;
+        let lastDrawingBufferHeight = 0;
+        const drawingBufferSize = new THREE.Vector2();
+
+        function updateCameraAndRendererSize() {
+            const cssWidth = Math.max(container.clientWidth, 1);
+            const cssHeight = Math.max(container.clientHeight, 1);
+
+            mainCamera.aspect = cssWidth / cssHeight;
+            mainCamera.updateProjectionMatrix();
+
+            const miniCssWidth = Math.max(Math.floor(cssWidth * 0.32), 1);
+            const miniCssHeight = Math.max(Math.floor(cssHeight * 0.32), 1);
+            secondaryCamera.aspect = miniCssWidth / miniCssHeight;
+            secondaryCamera.updateProjectionMatrix();
+
+            renderer.setSize(cssWidth, cssHeight, false);
+            renderer.getDrawingBufferSize(drawingBufferSize);
+            lastDrawingBufferWidth = Math.max(Math.floor(drawingBufferSize.x), 1);
+            lastDrawingBufferHeight = Math.max(Math.floor(drawingBufferSize.y), 1);
+        }
+
+        updateCameraAndRendererSize();
+
+        function render(now) {
+            requestAnimationFrame(render);
+
+            const delta = Math.min(Math.max((now - previousFrameTime) / 1000, 0), 0.05);
+            previousFrameTime = now;
+
+            cubeGroup.rotation.y = (cubeGroup.rotation.y + AUTO_SPIN_SPEED * delta) % TWO_PI;
+
+            const width = lastDrawingBufferWidth;
+            const height = lastDrawingBufferHeight;
+            if (width <= 0 || height <= 0) return;
+
+            // 1. ƏSAS KAMERA RENDERİ (Tam Ekran)
+            renderer.setViewport(0, 0, width, height);
+            renderer.setScissor(0, 0, width, height);
+            renderer.render(scene, mainCamera);
+
+            // 2. MİNİ KAMERA RENDERİ (Aşağı-Sağ Pəncərə — WebGL Bufer Koordinatları ilə)
+            const miniW = Math.max(Math.floor(width * 0.32), 1);
+            const miniH = Math.max(Math.floor(height * 0.32), 1);
+            const miniMarginX = Math.max(Math.floor(width * 0.012), 8);
+            const miniMarginY = Math.max(Math.floor(height * 0.012), 8);
+            const miniX = Math.max(width - miniW - miniMarginX, 0);
+            const miniY = miniMarginY;
+
+            renderer.setViewport(miniX, miniY, miniW, miniH);
+            renderer.setScissor(miniX, miniY, miniW, miniH);
+            renderer.render(scene, secondaryCamera);
+
+            // Render bitdikdə çərçivəni bərpa edirik
+            renderer.setViewport(0, 0, width, height);
+            renderer.setScissor(0, 0, width, height);
+        }
+
+        requestAnimationFrame(render);
+
+        let resizeTimer = 0;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(updateCameraAndRendererSize, 50);
+        }, { passive: true });
+
+        window.addEventListener('orientationchange', updateCameraAndRendererSize, { passive: true });
+
+        window.addEventListener('beforeunload', () => {
+            baseBoxGeometry.dispose();
+            sharedEdgeGeometry.dispose();
+            sharedEdgeMaterial.dispose();
+            sharedCubieMaterial.dispose();
+            renderer.dispose();
+        });
+
+        updateUI();
+    </script>
+</body>
+</html>
